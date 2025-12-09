@@ -11,6 +11,7 @@
 #define BUFFER_SIZE 256
 #define CACHELINE 8
 #define MOD 8650753
+
 BARRIER_INIT(my_barrier, NR_TASKLETS);
 
 int32_t __mram_noinit point_array[BUFFER_SIZE]; // input data
@@ -59,7 +60,8 @@ int main(void) {
     mram_read((__mram_ptr void*)(point_array + from), (void*)(read_cache + from), (BUFFER_SIZE / NR_TASKLETS) * sizeof(int32_t));
     
     // kernel 1: stage = 1, 2, 4, ..., root(BUFFER_SIZE)
-    for (unsigned int stage = 1; stage * stage < BUFFER_SIZE; stage = (stage << 1)) {
+    unsigned int stage = 1;
+    for (; stage * stage < BUFFER_SIZE && stage < (to-from); stage = (stage << 1)) {
         for (unsigned int i = from / 2; i < to / 2; i++) {
             int32_t w = 95; // Placeholder for twiddle factor
             uint16_t index = (i / stage) * (2 * stage) + (i % stage);
@@ -68,6 +70,9 @@ int main(void) {
             int32_t p = read_cache[top];
             int32_t q = read_cache[bottom];
             int32_t result_p, result_q;
+            if (tasklet_id == 0) {
+                printf("stage %d: top and bottom = %d and %d\n", stage, top, bottom);
+            }
             butterfly(&p, &q, &w, &result_p, &result_q);
             read_cache[top] = result_p;
             read_cache[bottom] = result_q;
@@ -76,13 +81,21 @@ int main(void) {
     barrier_wait(&my_barrier);
 
     //kernel 2
-    for (unsigned int stage = 16; stage  < BUFFER_SIZE; stage = (stage << 1)) {
-        for (unsigned int i = tasklet_id; i < (BUFFER_SIZE / 2); i += NR_TASKLETS) {
+    if (tasklet_id == 0) {
+        printf("first kernel finished\n");
+    }
+    uint8_t second_step_size = NR_TASKLETS;
+    if (second_step_size > (to-from))   
+        second_step_size = to - from;
+    for (; stage  < BUFFER_SIZE; stage = (stage << 1)) {
+        for (unsigned int i = tasklet_id; i < (BUFFER_SIZE / 2); i += second_step_size) {
             int32_t w = 95;
             uint16_t index = (i / stage) * (2 * stage) + (i % stage);
             uint16_t top = index;
             uint16_t bottom = (index + stage) >= BUFFER_SIZE ? (index + stage - BUFFER_SIZE) : (index + stage);
-            
+            if (tasklet_id == 0) {
+                printf("stage %d: top and bottom = %d and %d\n", stage, top, bottom);
+            }
             int32_t p = read_cache[top];
             int32_t q = read_cache[bottom];
             int32_t result_p, result_q;
